@@ -1,0 +1,153 @@
+---
+- name: Fetch configurations from NetBox and save to local HTML file
+  hosts: localhost
+  gather_facts: false
+  collections:
+    - ansible.builtin
+  vars:
+    netbox_url: "{{ netbox_url }}"
+    netbox_token: "{{ netbox_token }}"
+    output_file: "/home/user1/reports/netbox_configurations.html"
+    target_host: "node3"  # Replace with your target host
+
+  tasks:
+    - name: Ensure the /home/user1/reports directory exists on target host
+      file:
+        path: /home/user1/reports
+        state: directory
+        mode: '0755'
+      delegate_to: "{{ target_host }}"
+      register: report_dir_result
+
+    - name: Debug report directory result
+      debug:
+        var: report_dir_result
+
+    - name: Fetch devices from NetBox
+      uri:
+        url: "{{ netbox_url }}/api/dcim/devices/"
+        method: GET
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+        return_content: yes
+        validate_certs: no  # Set to 'yes' for production
+      register: devices_response
+      failed_when: devices_response.status != 200
+
+    - name: Fetch sites from NetBox
+      uri:
+        url: "{{ netbox_url }}/api/dcim/sites/"
+        method: GET
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+        return_content: yes
+        validate_certs: no  # Set to 'yes' for production
+      register: sites_response
+      failed_when: sites_response.status != 200
+
+    - name: Fetch racks from NetBox
+      uri:
+        url: "{{ netbox_url }}/api/dcim/racks/"
+        method: GET
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+        return_content: yes
+        validate_certs: no  # Set to 'yes' for production
+      register: racks_response
+      failed_when: racks_response.status != 200
+
+    - name: Save configurations to JSON files on local machine
+      copy:
+        content: |
+          {
+            "devices": {{ devices_response.content | to_nice_json }},
+            "sites": {{ sites_response.content | to_nice_json }},
+            "racks": {{ racks_response.content | to_nice_json }}
+          }
+        dest: "/tmp/netbox_configurations.json"
+        mode: '0644'
+      register: json_save_result
+      failed_when: json_save_result is not defined
+
+    - name: Debug JSON save result
+      debug:
+        var: json_save_result
+
+    - name: Ensure permanent directory exists on target host
+      file:
+        path: /home/user1/netbox_data
+        state: directory
+        mode: '0755'
+      delegate_to: "{{ target_host }}"
+      register: perm_dir_result
+
+    - name: Debug permanent directory result
+      debug:
+        var: perm_dir_result
+
+    - name: Copy JSON file to target host
+      copy:
+        src: /tmp/netbox_configurations.json
+        dest: /tmp/netbox_configurations.json
+      delegate_to: "{{ target_host }}"
+      register: copy_json_result
+
+    - name: Debug copy JSON file result
+      debug:
+        var: copy_json_result
+
+    - name: Move JSON file to a permanent location on target host
+      command: mv /tmp/netbox_configurations.json /home/user1/netbox_data/netbox_configurations.json
+      register: move_json_result
+      failed_when: move_json_result.rc != 0
+      delegate_to: "{{ target_host }}"
+
+    - name: Debug move JSON file result
+      debug:
+        var: move_json_result
+
+    - name: Convert NetBox configurations JSON to HTML on target host
+      template:
+        src: templates/netbox_configurations.html.j2
+        dest: "{{ output_file }}"
+      vars:
+        devices: "{{ devices_response.json.results }}"
+        sites: "{{ sites_response.json.results }}"
+        racks: "{{ racks_response.json.results }}"
+      register: template_result
+      failed_when: template_result is failed
+      delegate_to: "{{ target_host }}"
+
+    - name: Debug template result
+      debug:
+        var: template_result
+
+    - name: Verify HTML file creation
+      stat:
+        path: /home/user1/reports/netbox_configurations.html
+      register: html_file_check
+      delegate_to: "{{ target_host }}"
+
+    - name: Debug HTML file check
+      debug:
+        var: html_file_check
+
+    - name: Verify netbox_data directory creation
+      stat:
+        path: /home/user1/netbox_data
+      register: netbox_data_dir_check
+      delegate_to: "{{ target_host }}"
+
+    - name: Debug netbox_data directory check
+      debug:
+        var: netbox_data_dir_check
+
+    - name: Verify JSON file move
+      stat:
+        path: /home/user1/netbox_data/netbox_configurations.json
+      register: json_file_check
+      delegate_to: "{{ target_host }}"
+
+    - name: Debug JSON file check
+      debug:
+        var: json_file_check
